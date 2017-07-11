@@ -90,8 +90,8 @@ http.createServer(function(request, response) {
             'Authorization': `Token ${token}`,
             'X-Daike-App-Id': appId
           }
-        }).
-        then(function(res) {
+        })
+        .then(function(res) {
           return res.json()
         })
         .then(function(json) {

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'/>
+    <title>Daike demo</title>
+    <script src="https://cdn.jsdelivr.net/axios/0.16.1/axios.min.js"></script>
+    <style>
+      body {
+        width: 25em;
+        margin: 0 auto;
+        padding-top: 4em;
+        font-family: Tahoma, Verdana, Arial, sans-serif;
+      }
+      #ticketId {
+        width: 23em;
+      }
+      #textInput {
+        width: 23em;
+      }
+      ul {
+        padding-left: 1em;
+        padding-right: 1em;
+      }
+      ul li {
+        list-style-type: none;
+        font-size: 0.8em;
+      }
+      li.fromUser {
+        text-align: left;
+      }
+      li.fromStaff {
+        text-align: right;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h3>Please submit your question</h3>
+    <p>
+      <input id='ticketId' type='text' placeholder='resume conversation by ticket ID' />
+      <input id='ticketSubmit' type='button' value='resume'/>
+    </p>
+
+    <p>
+      <ul id='textContainer'>
+      </ul>
+    </p>
+
+    <br />
+
+    <p>
+      <input id='textInput' type='text' placeholder='start a new conversation' />
+      <input id='textSubmit' type='button' value='send' />
+    </p>
+  </body>
+  <script type='text/javascript'>
+    'use strict'
+    var ws = null
+    var id = 1
+    var ticketId = null
+    var pingPong = null
+    var ticketIdInput = document.querySelector('#ticketId')
+    var ticketButton = document.querySelector('#ticketSubmit')
+    var textContainer = document.querySelector('#textContainer')
+    var messageInput = document.querySelector('#textInput')
+    var messageButton = document.querySelector('#textSubmit')
+
+    function processMessage(message) {
+      switch(message.type) {
+      case "ticket_create":
+        if (message.user_id || message.user) {
+          textContainer.innerHTML += '<li class="fromUser">' + message.description + '</li>'
+        } else {
+          textContainer.innerHTML += '<li class="fromStaff">' + message.description + '</li>'
+        }
+        break
+      case "message":
+        if (message.user_id || message.user) {
+          textContainer.innerHTML += '<li class="fromUser">' + message.text + '</li>'
+        } else {
+          textContainer.innerHTML += '<li class="fromStaff">' + message.text + '</li>'
+        }
+        break
+      case "change_status":
+        if (confirm('Did we solve your problem?')) {
+          ws.send(JSON.stringify({
+            id: id++,
+            ticket_id: ticketId,
+            type: "change_status",
+            status: 'confirmed'
+          }))
+          ws.close()
+          ticketId = null
+          ticketIdInput.value = ""
+          ticketIdInput.disabled = false
+        } else {
+          ws.send(JSON.stringify({
+            id: id++,
+            ticket_id: ticketId,
+            type: "change_status",
+            status: 'waiting_for_user'
+          }))
+        }
+        break
+      default:
+        // ignore other events for now, please refer to https://developer.getdaike.com/rtm-api
+        return
+      }
+    }
+
+    function startWS(endpoint) {
+      ws = new WebSocket(endpoint)
+
+      ws.onopen = function(event) {
+        ticketIdInput.disabled = true
+        // say hello to server
+        ws.send(JSON.stringify({
+          id: id++,
+          ticket_id: ticketId,
+          type: 'hello'
+        }))
+        // using ping/pong to keepalive
+        pingPong = setInterval(function() {
+          ws.send(JSON.stringify({
+            id: id++,
+            ticket_id: ticketId,
+            type: 'ping'
+          }))
+        }, 30000)
+      }
+
+      ws.onmessage = function(event) {
+        let message = JSON.parse(event.data)
+        processMessage(message)
+      }
+
+      ws.onclose = function(event) {
+        ws.close()
+        ticketId = null
+        ticketIdInput.value = ""
+        ticketIdInput.disabled = false
+        clearInterval(pingPong)
+        ws = null
+      }
+    }
+
+    function startConversation(message) {
+      axios.post('/', {
+        description:message
+      }).then(function(response) {
+        let r = response.data
+        ticketIdInput.value = r.ticket_id
+        ticketId = r.ticket_id
+
+        startWS(r.endpoint)
+      })
+    }
+
+    function resumeConversation(id) {
+      axios.post('/', {
+        ticket_id: id
+      }).then(function(response) {
+        let r = response.data
+        ticketIdInput.value = r.ticket_id
+        ticketId = r.ticket_id
+
+        startWS(r.endpoint)
+        r.events.forEach(function(message) {
+          if (message.type == 'change_status') {
+            // ignore status events in initialization
+            return
+          }
+          processMessage(message)
+        });
+      })
+    }
+
+    function sendMessage(message) {
+      ws.send(JSON.stringify({
+        id: id++,
+        ticket_id: ticketId,
+        type: 'message',
+        text: message,
+      }))
+    }
+
+    ticketButton.addEventListener('click', function(event) {
+      textContainer.innerHTML = ""
+      if (ticketIdInput.value) {
+        resumeConversation(ticketIdInput.value) 
+        ticketIdInput.value = ''
+      }
+    })
+    messageButton.addEventListener('click', function(event) {
+      if (messageInput.value) {
+        // send message or create ticket
+        if (ticketId) {
+          sendMessage(messageInput.value)
+        } else {
+          startConversation(messageInput.value)
+        }
+        messageInput.value = ''
+      }
+    })
+  </script>
+</html>
